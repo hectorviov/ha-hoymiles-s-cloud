@@ -6,6 +6,7 @@ from homeassistant.const import UnitOfPower, UnitOfEnergy, UnitOfElectricPotenti
 
 from .hoymiles_client import HoymilesClient
 from .device_registry import create_station_device_info, create_module_device_info
+from .micro import async_setup_micro_sensors
 
 DOMAIN = "hoymiles_nimbus"
 
@@ -98,6 +99,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     _LOGGER.warning("Created %d sensors for Hoymiles devices", len(entities))
     async_add_entities(entities)
+
+    # Per-microinverter grid voltage / frequency / temperature / AC power
+    try:
+        await async_setup_micro_sensors(hass, client, config_entry, async_add_entities)
+    except Exception as err:  # noqa: BLE001 - never break the station/panel sensors
+        _LOGGER.error("Could not set up microinverter sensors: %s", err)
 
 class HoymilesStationPowerSensor(SensorEntity):
     def __init__(self, client, name, sid, device_info):

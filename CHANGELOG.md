@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-09-27
+
+### Added
+- **Per-microinverter sensors** (one device per inverter, linked to the station):
+  - Grid Voltage (V), with `min_today` / `max_today` attributes
+  - Grid Frequency (Hz)
+  - Temperature (°C)
+  - AC Power (W)
+  - Grid Voltage Max Today (V)
+  - Production Dropouts Today: 5-minute slots where the inverter had grid voltage and
+    produced before and after, but reported 0 W (typical of grid-protection trips)
+- Data comes from `pvm-data/api/0/micro/data/count_by_day` (protobuf, `pb_ver: 1`),
+  the same call the S-Cloud web UI uses for the "Grid Voltage / Grid Frequency /
+  Temperature" charts. Polled every 5 minutes; values are `unknown` while the
+  inverters sleep.
+- Automatic re-login and retry when the token has expired.
+
 ## [0.3.0] - 2026-03-23
 
 ### Added
