@@ -100,7 +100,90 @@ def parse_count_by_day(content: bytes, requested_micro_ids: list[int] | None = N
     return result
 
 
-def latest_values(day: MicroDaySeries, micro_id: int) -> dict:
+MODULE_POWER = "MODULE_POWER"
+MODULE_VOLTAGE = "MODULE_V"
+MODULE_CURRENT = "MODULE_I"
+MODULE_QUOTAS = [MODULE_POWER, MODULE_VOLTAGE, MODULE_CURRENT]
+
+# A slot older than this (or from another day) means the DTU stopped
+# reporting (night, outage): values are then treated as "not producing".
+STALE_AFTER_MINUTES = 40
+
+
+@dataclass
+class ModuleDaySeries:
+    date: str | None = None
+    times: list[str] = field(default_factory=list)
+    # {(micro_id, port): {quota: [values...]}}
+    series: dict[tuple[int, int], dict[str, list[float]]] = field(default_factory=dict)
+
+
+def parse_module_count_by_day(content: bytes) -> ModuleDaySeries:
+    """Parse pvm-data/api/0/module/data/count_by_day (pb_ver 1).
+
+    Same layout as the microinverter call, plus field 4 = port in each series.
+    """
+    result = ModuleDaySeries()
+    for field_no, wire_type, value in _iter_fields(content):
+        if field_no == 1 and wire_type == 2:
+            result.times.append(value.decode("utf-8", "replace"))
+        elif field_no == 3 and wire_type == 2:
+            result.date = value.decode("utf-8", "replace")
+        elif field_no == 2 and wire_type == 2:
+            quota, values, micro_id, port = None, [], None, None
+            for f, wt, v in _iter_fields(value):
+                if f == 1 and wt == 2:
+                    quota = v.decode("utf-8", "replace")
+                elif f == 2 and wt == 2:
+                    values = [round(x[0], 2) for x in struct.iter_unpack("<d", v[: len(v) - len(v) % 8])]
+                elif f == 3 and wt == 0:
+                    micro_id = v
+                elif f == 4 and wt == 0:
+                    port = v
+            if quota is None or micro_id is None or port is None:
+                continue
+            result.series.setdefault((micro_id, port), {})[quota] = values
+    return result
+
+
+def is_stale(date: str | None, time: str | None, now) -> bool:
+    """True when the last slot is not from today or is too old."""
+    if now is None:
+        return False
+    if not date or not time:
+        return True
+    if date != now.strftime("%Y-%m-%d"):
+        return True
+    try:
+        hh, mm = (int(x) for x in time.split(":"))
+    except ValueError:
+        return True
+    age = (now.hour * 60 + now.minute) - (hh * 60 + mm)
+    return age > STALE_AFTER_MINUTES
+
+
+def latest_module_values(day: ModuleDaySeries, micro_id: int, port: int, now=None) -> dict:
+    data = day.series.get((micro_id, port), {})
+    if not day.times or not data:
+        return {"power": 0.0, "voltage": None, "current": None, "time": None}
+    idx = len(day.times) - 1
+
+    def at(quota):
+        vals = data.get(quota) or []
+        return vals[idx] if idx < len(vals) else None
+
+    time = day.times[idx]
+    if is_stale(day.date, time, now):
+        return {"power": 0.0, "voltage": None, "current": None, "time": time}
+    return {
+        "power": at(MODULE_POWER) or 0.0,
+        "voltage": at(MODULE_VOLTAGE),
+        "current": at(MODULE_CURRENT),
+        "time": time,
+    }
+
+
+def latest_values(day: MicroDaySeries, micro_id: int, now=None) -> dict:
     """Return the most recent slot for one microinverter.
 
     When power, voltage and frequency are all 0 the inverter is asleep
@@ -120,11 +203,11 @@ def latest_values(day: MicroDaySeries, micro_id: int) -> dict:
     voltage = at(QUOTA_GRID_VOLTAGE)
     frequency = at(QUOTA_GRID_FREQUENCY)
     temperature = at(QUOTA_TEMPERATURE)
-    asleep = not voltage and not frequency and not power
+    asleep = (not voltage and not frequency and not power) or is_stale(day.date, day.times[idx], now)
 
     return {
         "time": day.times[idx],
-        "power": None if asleep else power,
+        "power": 0.0 if asleep else power,
         "grid_voltage": None if asleep else voltage,
         "grid_frequency": None if asleep else frequency,
         "temperature": None if asleep else temperature,

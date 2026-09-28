@@ -14,13 +14,13 @@ try:
     from .classes.solar_module import SolarModule
     from .classes.station import Station
     from .parsers import ProtobufParser
-    from .micro_data import ALL_QUOTAS, parse_count_by_day
+    from .micro_data import ALL_QUOTAS, MODULE_QUOTAS, parse_count_by_day, parse_module_count_by_day
 except ImportError:
     from classes.micro_inverter import Microinverter
     from classes.solar_module import SolarModule
     from classes.station import Station
     from parsers import ProtobufParser
-    from micro_data import ALL_QUOTAS, parse_count_by_day
+    from micro_data import ALL_QUOTAS, MODULE_QUOTAS, parse_count_by_day, parse_module_count_by_day
 
 _LOGGER = logging.getLogger(__name__)
 _CACHE_LOCK = threading.RLock()
@@ -61,6 +61,7 @@ class HoymilesClient:
             "down_station_day_data": "pvm-data/api/0/station/down_station_day_data",
             "select_device_of_tree": "pvm/api/0/station/select_device_of_tree",
             "micro_count_by_day": "pvm-data/api/0/micro/data/count_by_day",
+            "module_count_by_day": "pvm-data/api/0/module/data/count_by_day",
         }
         
         self.token = None
@@ -447,6 +448,27 @@ class HoymilesClient:
                                          headers=dict(headers), response_type='raw')
             day = parse_count_by_day(content, list(micro_ids))
         return day
+
+    def module_count_by_day(self, sid, date, micro_id, ports, quotas=None):
+        """Per-panel (per-port) day series: DC power, voltage, current."""
+        payload = {
+            "sid": sid,
+            "date": date,
+            "mi_list": [{"id": micro_id, "port": p} for p in ports],
+            "quota": quotas or MODULE_QUOTAS,
+            "pb_ver": 1,
+        }
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/plain, */*"}
+        try:
+            content = self._post_request(self.uris['module_count_by_day'], payload=payload,
+                                         headers=dict(headers), response_type='raw')
+            return parse_module_count_by_day(content)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.info("module_count_by_day failed (%s), logging in again and retrying", err)
+            self.login()
+            content = self._post_request(self.uris['module_count_by_day'], payload=payload,
+                                         headers=dict(headers), response_type='raw')
+            return parse_module_count_by_day(content)
 
     @cached(cache=TTLCache(maxsize=100, ttl=300), lock=_CACHE_LOCK)
     def select_device_of_tree(self, station_id):
