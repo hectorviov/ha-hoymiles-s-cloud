@@ -77,6 +77,12 @@ Once installed, Nimbus creates several types of entities for comprehensive monit
 - **`sensor.hoymiles_station_[name]_panel_[id]_voltage`** - Panel voltage in volts
 - **`sensor.hoymiles_station_[name]_panel_[id]_current`** - Panel current in amperes
 
+#### Microinverter Entities (Per Inverter)
+- **Grid Voltage**, **Grid Frequency**, **Temperature**, **AC Power**
+- **Grid Voltage Max Today** and **Production Dropouts Today** (0 W slots in the middle of the
+  production day while grid voltage is present: usually grid-protection trips such as overvoltage)
+- Updated every 5 minutes from the S-Cloud day series; the DTU itself uploads every 5-15 minutes
+
 ### Device Organization
 - All entities are properly grouped under their respective devices in Home Assistant
 - Station devices contain the main power/energy sensors and power level controls  

@@ -12,11 +12,13 @@ try:
     from .classes.solar_module import SolarModule
     from .classes.station import Station
     from .parsers import ProtobufParser
+    from .micro_data import ALL_QUOTAS, parse_count_by_day
 except ImportError:
     from classes.micro_inverter import Microinverter
     from classes.solar_module import SolarModule
     from classes.station import Station
     from parsers import ProtobufParser
+    from micro_data import ALL_QUOTAS, parse_count_by_day
 
 _LOGGER = logging.getLogger(__name__)
 _CACHE_LOCK = threading.RLock()
@@ -56,6 +58,7 @@ class HoymilesClient:
             "down_module_day_data": "pvm-data/api/0/module/data/down_module_day_data",
             "down_station_day_data": "pvm-data/api/0/station/down_station_day_data",
             "select_device_of_tree": "pvm/api/0/station/select_device_of_tree",
+            "micro_count_by_day": "pvm-data/api/0/micro/data/count_by_day",
         }
         
         self.token = None
@@ -90,6 +93,8 @@ class HoymilesClient:
             
             # Attempt to parse the response as JSON
             try:
+                if response_type == 'raw':
+                    return response.content
                 if response_type == 'protobuf' and binary:
                     parser = ProtobufParser(response.content)
                     _LOGGER.debug("API Response: %s - Protobuf data received", response.status_code)
@@ -282,6 +287,35 @@ class HoymilesClient:
         }
         response = self._post_request(self.uris['down_module_day_data'], payload=payload, response_type='protobuf', binary=True)
         return response
+
+    def micro_count_by_day(self, sid, date, micro_ids, quotas=None):
+        """Per-microinverter day series: AC power, grid voltage, grid frequency, temperature.
+
+        Returns a MicroDaySeries (see micro_data.py). Retries once with a fresh
+        login if the token has expired.
+        """
+        payload = {
+            "sid": sid,
+            "date": date,
+            "mi_list": list(micro_ids),
+            "quota": quotas or ALL_QUOTAS,
+            "pb_ver": 1,
+        }
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/plain, */*"}
+        try:
+            content = self._post_request(self.uris['micro_count_by_day'], payload=payload,
+                                         headers=dict(headers), response_type='raw')
+            day = parse_count_by_day(content, list(micro_ids))
+        except Exception as err:  # noqa: BLE001 - token expiry shows up as HTTP error or junk body
+            _LOGGER.info("micro_count_by_day failed (%s), logging in again and retrying", err)
+            clear = getattr(self.get_token, "cache_clear", None)
+            if clear:
+                clear()
+            self.login()
+            content = self._post_request(self.uris['micro_count_by_day'], payload=payload,
+                                         headers=dict(headers), response_type='raw')
+            day = parse_count_by_day(content, list(micro_ids))
+        return day
 
     @cached(cache=TTLCache(maxsize=100, ttl=300), lock=_CACHE_LOCK)
     def select_device_of_tree(self, station_id):
