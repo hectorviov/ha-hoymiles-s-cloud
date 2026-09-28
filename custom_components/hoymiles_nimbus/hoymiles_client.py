@@ -65,6 +65,9 @@ class HoymilesClient:
         
         self.token = None
         self.cache = TTLCache(maxsize=100, ttl=300)
+        # Refresh interval shared by all sensors (seconds); set from the options.
+        self.scan_interval_s = 300
+        self._station_cache = {}
 
     # ============================================================================
     # HTTP HELPER METHODS
@@ -388,14 +391,18 @@ class HoymilesClient:
         return data.get("list", [])
         
     
-    @cached(cache=TTLCache(maxsize=100, ttl=300), lock=_CACHE_LOCK)
-    def count_station_real_data(self,id):
-        """Get the count of station real data."""
+    def count_station_real_data(self, id):
+        """Station totals (power, today/total energy). Cached for the refresh interval."""
+        import time
+        with _CACHE_LOCK:
+            hit = self._station_cache.get(id)
+            if hit and time.monotonic() - hit[0] < self.scan_interval_s:
+                return hit[1]
         _LOGGER.debug(f"Getting count of station real data for ID: {id}")
-        payload = {
-            "sid": id,
-        }
-        return self._post_request(self.uris['count_station_data'], payload=payload)
+        data = self._post_request(self.uris['count_station_data'], payload={"sid": id})
+        with _CACHE_LOCK:
+            self._station_cache[id] = (time.monotonic(), data)
+        return data
 
     @cached(cache=TTLCache(maxsize=100, ttl=300), lock=_CACHE_LOCK)
     def findStation(self, sid):

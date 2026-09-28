@@ -46,7 +46,9 @@ class HoymilesMicroCoordinator(DataUpdateCoordinator):
     """Fetches the day series for every microinverter of every station."""
 
     def __init__(self, hass, client, config_entry=None):
-        common = dict(name="Hoymiles Nimbus microinverters", update_interval=MICRO_UPDATE_INTERVAL)
+        seconds = getattr(client, "scan_interval_s", None)
+        interval = timedelta(seconds=seconds) if isinstance(seconds, (int, float)) else MICRO_UPDATE_INTERVAL
+        common = dict(name="Hoymiles Nimbus microinverters", update_interval=interval)
         try:
             super().__init__(hass, _LOGGER, config_entry=config_entry, **common)
         except TypeError:  # Home Assistant < 2024.8 has no config_entry argument
