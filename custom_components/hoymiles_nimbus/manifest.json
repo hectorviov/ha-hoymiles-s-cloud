@@ -1,7 +1,7 @@
 {
   "domain": "hoymiles_nimbus",
   "name": "Hoymiles Nimbus",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "documentation": "https://github.com/wil-lem/ha-hoymiles-s-cloud",
   "issue_tracker": "https://github.com/wil-lem/ha-hoymiles-s-cloud/issues",
   "dependencies": [],
@@ -11,7 +11,8 @@
   "requirements": [
     "requests>=2.25.0",
     "cachetools>=4.2.0",
-    "PyYAML>=6.0"
+    "PyYAML>=6.0",
+    "argon2-cffi>=21.3.0"
   ],
   "iot_class": "cloud_polling",
   "config_flow": true,

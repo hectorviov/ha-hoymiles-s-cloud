@@ -47,6 +47,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         # Return info that you want to store in the config entry.
         return {"title": "Hoymiles Nimbus"}
     except Exception as ex:
+        _LOGGER.warning("Hoymiles Nimbus setup: %s", ex)
+        text = str(ex).lower()
+        if "password" in text or "credential" in text or "account" in text:
+            raise InvalidAuth from ex
         # You can be more specific about different types of connection errors
         if "401" in str(ex) or "authentication" in str(ex).lower():
             raise InvalidAuth from ex

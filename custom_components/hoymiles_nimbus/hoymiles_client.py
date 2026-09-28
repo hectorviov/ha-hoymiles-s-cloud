@@ -1,3 +1,5 @@
+import base64
+import binascii
 import datetime
 import requests
 import threading
@@ -74,6 +76,8 @@ class HoymilesClient:
         url = f"{self.base_url}{uri}"
         if headers is None:
             headers = {"Content-Type": "application/json"}
+        for k, v in getattr(self, "_extra_headers", {}).items():
+            headers.setdefault(k, v)
         if use_auth:
             if self.token:
                 headers["Authorization"] = self.token
@@ -121,6 +125,8 @@ class HoymilesClient:
         url = f"{self.base_url}{uri}"
         if headers is None:
             headers = {"Content-Type": "application/json"}
+        for k, v in getattr(self, "_extra_headers", {}).items():
+            headers.setdefault(k, v)
         if self.token:
             headers["Authorization"] = self.token
         else:
@@ -163,17 +169,138 @@ class HoymilesClient:
       return self._post_request(self.uris['login'], payload=payload, use_auth=False)
     
 
+    # Client identities accepted by the v3 login. "web" mimics the S-Cloud
+    # website; "installer" mimics the S-Miles Installer app (some owner accounts
+    # created by an installer only accept this one).
+    _AUTH_PROFILES = {
+        "web": {"User-Agent": "HomeAssistant-HoymilesNimbus"},
+        "installer": {
+            "User-Agent": "S-Miles Installer/3.7.1",
+            "App-Version": "3.7.1",
+            "X-App-Version": "3.7.1",
+            "X-Client-Type": "mobile",
+        },
+    }
+
+    def _auth_post(self, path, payload, extra_headers):
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        headers.update(extra_headers)
+        url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        try:
+            return response.json()
+        except ValueError:
+            return {"status": str(response.status_code), "message": response.text[:200]}
+
+    @staticmethod
+    def _unwrap_pre_insp(resp):
+        if isinstance(resp, dict) and ("status" in resp or "data" in resp):
+            data = resp.get("data")
+            return str(resp.get("status")), resp.get("message"), data if isinstance(data, dict) else {}
+        if isinstance(resp, dict) and any(k in resp for k in ("a", "n", "u")):
+            return "0", "success", resp
+        return None, (resp or {}).get("message") if isinstance(resp, dict) else None, {}
+
+    @staticmethod
+    def _decode_salt(value):
+        value = value.strip()
+        try:
+            if len(value) % 2 == 0:
+                return bytes.fromhex(value)
+        except ValueError:
+            pass
+        try:
+            return base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError):
+            return value.encode()
+
+    def _login_v3(self, profile):
+        """Browser/app login: pre-insp (salt + nonce) then login with a credential hash.
+
+        Returns (token, error_message).
+        """
+        extra = self._AUTH_PROFILES[profile]
+        pre = self._auth_post("iam/pub/3/auth/pre-insp", {"u": self.username}, extra)
+        status, message, data = self._unwrap_pre_insp(pre)
+        if status not in (None, "0") or not data.get("n"):
+            return None, f"pre-insp: status={status} message={message}"
+
+        salt = data.get("a")
+        if salt:
+            try:
+                from argon2.low_level import Type, hash_secret_raw
+            except ImportError:
+                return None, "account needs Argon2 login but argon2-cffi is not installed"
+            raw = hash_secret_raw(
+                secret=self.password.encode(), salt=self._decode_salt(salt),
+                time_cost=3, memory_cost=32768, parallelism=1, hash_len=32, type=Type.ID,
+            )
+            candidates = [("argon2", raw.hex())]
+        else:
+            md5_hex = hashlib.md5(self.password.encode()).hexdigest()
+            sha = hashlib.sha256(self.password.encode())
+            candidates = [
+                ("md5.sha256b64", f"{md5_hex}.{base64.b64encode(sha.digest()).decode()}"),
+                ("sha256hex", sha.hexdigest()),
+            ]
+
+        nonce = data["n"]
+        last = None
+        for i, (variant, ch) in enumerate(candidates):
+            if i > 0:  # every attempt needs a fresh nonce
+                status, message, data = self._unwrap_pre_insp(
+                    self._auth_post("iam/pub/3/auth/pre-insp", {"u": self.username}, extra))
+                if not data.get("n"):
+                    break
+                nonce = data["n"]
+            resp = self._auth_post("iam/pub/3/auth/login", {"u": self.username, "ch": ch, "n": nonce}, extra)
+            token = (resp.get("data") or {}).get("token") if isinstance(resp, dict) else None
+            if str(resp.get("status")) == "0" and token:
+                _LOGGER.info("Hoymiles login OK (v3, %s profile, %s hash)", profile, variant)
+                return token, None
+            last = f"login {variant}: status={resp.get('status')} message={resp.get('message')}"
+        return None, last
+
+    def _login_v0(self):
+        resp = self._auth_post("iam/pub/0/auth/login",
+                               {"user_name": self.username, "password": self.get_password_hash()},
+                               self._AUTH_PROFILES["web"])
+        token = (resp.get("data") or {}).get("token") if isinstance(resp, dict) else None
+        if str(resp.get("status")) == "0" and token:
+            _LOGGER.info("Hoymiles login OK (legacy v0)")
+            return token, None
+        return None, f"status={resp.get('status')} message={resp.get('message')}"
+
     def login(self):
-      """Authenticate with Hoymiles S-Cloud and retrieve a token."""
-      _LOGGER.warning("Logging into Hoymiles S-Cloud for user: %s", self.username)
-      response_data = self.get_token(username=self.username, password=self.get_password_hash())
-      if response_data and "data" in response_data and "token" in response_data["data"]:
-          self.token = response_data["data"]["token"]
-          _LOGGER.warning("Successfully authenticated with Hoymiles S-Cloud")
-          return True
-      else:
-          _LOGGER.error("Login failed: Token not found in response")
-          raise Exception("Login failed: Token not found in response")
+        """Authenticate with Hoymiles S-Cloud and retrieve a token.
+
+        Tries the current v3 login (web, then installer identity) and falls back
+        to the legacy v0 MD5 login.
+        """
+        _LOGGER.debug("Logging into Hoymiles S-Cloud for user: %s", self.username)
+        errors = []
+        for profile in ("web", "installer"):
+            try:
+                token, err = self._login_v3(profile)
+            except Exception as ex:  # noqa: BLE001
+                token, err = None, str(ex)
+            if token:
+                self.token = token
+                self._extra_headers = dict(self._AUTH_PROFILES[profile])
+                return True
+            errors.append(f"v3/{profile}: {err}")
+        try:
+            token, err = self._login_v0()
+        except Exception as ex:  # noqa: BLE001
+            token, err = None, str(ex)
+        if token:
+            self.token = token
+            self._extra_headers = dict(self._AUTH_PROFILES["web"])
+            return True
+        errors.append(f"v0: {err}")
+        summary = " | ".join(errors)
+        _LOGGER.error("Hoymiles login failed: %s", summary)
+        raise Exception(f"Login failed: {summary}")
 
     # ============================================================================
     # DATA FETCHING METHODS
@@ -308,9 +435,6 @@ class HoymilesClient:
             day = parse_count_by_day(content, list(micro_ids))
         except Exception as err:  # noqa: BLE001 - token expiry shows up as HTTP error or junk body
             _LOGGER.info("micro_count_by_day failed (%s), logging in again and retrying", err)
-            clear = getattr(self.get_token, "cache_clear", None)
-            if clear:
-                clear()
             self.login()
             content = self._post_request(self.uris['micro_count_by_day'], payload=payload,
                                          headers=dict(headers), response_type='raw')
