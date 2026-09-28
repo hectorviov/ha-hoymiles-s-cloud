@@ -13,6 +13,7 @@ No .proto file is published, so this is a small hand-written wire-format reader.
 """
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass, field
 
@@ -22,6 +23,8 @@ QUOTA_GRID_FREQUENCY = "MI_NET_RATE"
 QUOTA_TEMPERATURE = "MI_TEMPERATURE"
 
 ALL_QUOTAS = [QUOTA_POWER, QUOTA_GRID_VOLTAGE, QUOTA_GRID_FREQUENCY, QUOTA_TEMPERATURE]
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 @dataclass
@@ -75,7 +78,9 @@ def parse_count_by_day(content: bytes, requested_micro_ids: list[int] | None = N
         if field_no == 1 and wire_type == 2:
             result.times.append(value.decode("utf-8", "replace"))
         elif field_no == 3 and wire_type == 2:
-            result.date = value.decode("utf-8", "replace")
+            text = value.decode("utf-8", "replace")
+            if _DATE_RE.match(text):
+                result.date = text
         elif field_no == 2 and wire_type == 2:
             quota = None
             values: list[float] = []
@@ -118,17 +123,21 @@ class ModuleDaySeries:
     series: dict[tuple[int, int], dict[str, list[float]]] = field(default_factory=dict)
 
 
-def parse_module_count_by_day(content: bytes) -> ModuleDaySeries:
+def parse_module_count_by_day(content: bytes, requested_date: str | None = None) -> ModuleDaySeries:
     """Parse pvm-data/api/0/module/data/count_by_day (pb_ver 1).
 
     Same layout as the microinverter call, plus field 4 = port in each series.
     """
-    result = ModuleDaySeries()
+    result = ModuleDaySeries(date=requested_date)
     for field_no, wire_type, value in _iter_fields(content):
         if field_no == 1 and wire_type == 2:
             result.times.append(value.decode("utf-8", "replace"))
         elif field_no == 3 and wire_type == 2:
-            result.date = value.decode("utf-8", "replace")
+            # In this response field 3 is the chart type, not a date; keep the
+            # requested date unless the field really looks like one.
+            text = value.decode("utf-8", "replace")
+            if _DATE_RE.match(text):
+                result.date = text
         elif field_no == 2 and wire_type == 2:
             quota, values, micro_id, port = None, [], None, None
             for f, wt, v in _iter_fields(value):

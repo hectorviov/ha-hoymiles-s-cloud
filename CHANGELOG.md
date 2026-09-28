@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-09-28
+
+### Fixed
+- Panel sensors stuck at 0 W: `module/data/count_by_day` returns an empty body when
+  several quotas are requested together. Power, voltage and current are now requested
+  one at a time and merged. An empty answer is logged as a warning.
+- The requested date is used when a response does not carry one.
+
 ## [0.6.0] - 2026-09-28
 
 ### Fixed

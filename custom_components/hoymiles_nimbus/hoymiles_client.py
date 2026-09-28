@@ -450,25 +450,43 @@ class HoymilesClient:
         return day
 
     def module_count_by_day(self, sid, date, micro_id, ports, quotas=None):
-        """Per-panel (per-port) day series: DC power, voltage, current."""
-        payload = {
-            "sid": sid,
-            "date": date,
-            "mi_list": [{"id": micro_id, "port": p} for p in ports],
-            "quota": quotas or MODULE_QUOTAS,
-            "pb_ver": 1,
-        }
+        """Per-panel (per-port) day series: DC power, voltage, current.
+
+        This endpoint answers with an EMPTY body when several quotas are asked
+        at once (unlike the microinverter one), so each quota is its own request
+        and the results are merged.
+        """
         headers = {"Content-Type": "application/json", "Accept": "application/json, text/plain, */*"}
-        try:
-            content = self._post_request(self.uris['module_count_by_day'], payload=payload,
-                                         headers=dict(headers), response_type='raw')
-            return parse_module_count_by_day(content)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.info("module_count_by_day failed (%s), logging in again and retrying", err)
-            self.login()
-            content = self._post_request(self.uris['module_count_by_day'], payload=payload,
-                                         headers=dict(headers), response_type='raw')
-            return parse_module_count_by_day(content)
+        merged = None
+        for quota in quotas or MODULE_QUOTAS:
+            payload = {
+                "sid": sid,
+                "date": date,
+                "mi_list": [{"id": micro_id, "port": p} for p in ports],
+                "quota": [quota],
+                "pb_ver": 1,
+            }
+            try:
+                content = self._post_request(self.uris['module_count_by_day'], payload=payload,
+                                             headers=dict(headers), response_type='raw')
+                part = parse_module_count_by_day(content, date)
+            except Exception as err:  # noqa: BLE001 - expired token shows up as an error
+                _LOGGER.info("module_count_by_day failed (%s), logging in again and retrying", err)
+                self.login()
+                content = self._post_request(self.uris['module_count_by_day'], payload=payload,
+                                             headers=dict(headers), response_type='raw')
+                part = parse_module_count_by_day(content, date)
+            if not part.series:
+                _LOGGER.warning("Empty %s panel data for microinverter %s (%d bytes)",
+                                quota, micro_id, len(content or b""))
+            if merged is None:
+                merged = part
+            else:
+                if len(part.times) > len(merged.times):
+                    merged.times = part.times
+                for key, values in part.series.items():
+                    merged.series.setdefault(key, {}).update(values)
+        return merged
 
     @cached(cache=TTLCache(maxsize=100, ttl=300), lock=_CACHE_LOCK)
     def select_device_of_tree(self, station_id):
