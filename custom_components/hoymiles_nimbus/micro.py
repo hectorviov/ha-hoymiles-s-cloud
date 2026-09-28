@@ -25,7 +25,10 @@ from homeassistant.helpers.update_coordinator import (
 )
 from homeassistant.util import dt as dt_util
 
-from .micro_data import day_stats, latest_values
+from homeassistant.const import UnitOfElectricCurrent
+
+from .device_registry import create_module_device_info
+from .micro_data import day_stats, latest_module_values, latest_values
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,6 +43,7 @@ class MicroInfo:
     micro_id: int
     sn: str
     model: str | None
+    ports: list = None  # [{"port": 1, "x": 0, "y": 4}, ...]
 
 
 class HoymilesMicroCoordinator(DataUpdateCoordinator):
@@ -62,13 +66,24 @@ class HoymilesMicroCoordinator(DataUpdateCoordinator):
             sid = station.get("id")
             data = self._client.select_by_station(sid) or {}
             for m in data.get("list", []):
+                mid = m.get("id")
+                try:
+                    layout = (self._client.micro_find(mid, sid) or {}).get("layout_list") or []
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning("Could not read panel layout for %s: %s", m.get("sn"), err)
+                    layout = []
+                ports = sorted(
+                    ({"port": p.get("port"), "x": p.get("x"), "y": p.get("y")} for p in layout if p.get("port")),
+                    key=lambda p: p["port"],
+                )
                 micros.append(
                     MicroInfo(
                         station_id=sid,
                         station_name=station.get("name", "Unknown"),
-                        micro_id=m.get("id"),
+                        micro_id=mid,
                         sn=m.get("sn"),
-                        model=m.get("model_no") or m.get("model"),
+                        model=m.get("model_no") or m.get("model") or m.get("init_hard_no"),
+                        ports=ports,
                     )
                 )
         return micros
@@ -77,7 +92,8 @@ class HoymilesMicroCoordinator(DataUpdateCoordinator):
         if not self.micros:
             self.micros = self._discover()
 
-        date = dt_util.now().strftime("%Y-%m-%d")
+        now = dt_util.now()
+        date = now.strftime("%Y-%m-%d")
         by_station: dict[int, list[int]] = {}
         for m in self.micros:
             by_station.setdefault(m.station_id, []).append(m.micro_id)
@@ -87,9 +103,18 @@ class HoymilesMicroCoordinator(DataUpdateCoordinator):
             for mid in ids:
                 # One request per inverter, exactly like the S-Cloud web UI does.
                 day = self._client.micro_count_by_day(sid, date, [mid])
-                values = latest_values(day, mid)
+                values = latest_values(day, mid, now)
                 values.update(day_stats(day, mid))
                 values["date"] = day.date
+                values["modules"] = {}
+                micro = next(m for m in self.micros if m.micro_id == mid)
+                if micro.ports:
+                    try:
+                        mday = self._client.module_count_by_day(sid, date, mid, [p["port"] for p in micro.ports])
+                        for p in micro.ports:
+                            values["modules"][p["port"]] = latest_module_values(mday, mid, p["port"], now)
+                    except Exception as err:  # noqa: BLE001 - keep inverter data if panels fail
+                        _LOGGER.warning("Panel data for %s failed: %s", micro.sn, err)
                 result[mid] = values
         return result
 
@@ -204,6 +229,59 @@ class HoymilesMicroSensor(CoordinatorEntity, SensorEntity):
         return attrs
 
 
+PANEL_SENSORS = {
+    "power": ("Power", UnitOfPower.WATT, SensorDeviceClass.POWER, 1),
+    "voltage": ("Voltage", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, 1),
+    "current": ("Current", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, 2),
+}
+
+
+class HoymilesPanelSensor(CoordinatorEntity, SensorEntity):
+    """DC power / voltage / current of one panel (one microinverter port).
+
+    Keeps the unique_id of the original Nimbus panel sensors, so existing
+    entities, history and dashboards carry over.
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:solar-panel"
+
+    def __init__(self, coordinator, micro: MicroInfo, port: dict, key: str):
+        super().__init__(coordinator)
+        label, unit, device_class, precision = PANEL_SENSORS[key]
+        self._micro = micro
+        self._port = port
+        self._key = key
+        module_id = f"{micro.sn}-{port['port']}"
+        self._attr_name = f"{micro.station_name} Panel {module_id} {label}"
+        self._attr_unique_id = f"hoymiles_nimbus_module_{module_id}_{key}"
+        self._attr_native_unit_of_measurement = unit
+        self._attr_device_class = device_class
+        self._attr_suggested_display_precision = precision
+        self._attr_device_info = create_module_device_info(module_id, f"hoymiles_station_{micro.station_id}")
+
+    @property
+    def _values(self) -> dict:
+        micro = (self.coordinator.data or {}).get(self._micro.micro_id, {})
+        return micro.get("modules", {}).get(self._port["port"], {})
+
+    @property
+    def native_value(self):
+        return self._values.get(self._key)
+
+    @property
+    def extra_state_attributes(self):
+        attrs = {
+            "microinverter": self._micro.sn,
+            "port": self._port["port"],
+            "position_x": self._port.get("x"),
+            "position_y": self._port.get("y"),
+        }
+        if self._values.get("time"):
+            attrs["data_time"] = self._values["time"]
+        return attrs
+
+
 async def async_setup_micro_sensors(hass, client, config_entry, async_add_entities):
     coordinator = HoymilesMicroCoordinator(hass, client, config_entry)
     await coordinator.async_config_entry_first_refresh()
@@ -211,6 +289,12 @@ async def async_setup_micro_sensors(hass, client, config_entry, async_add_entiti
         HoymilesMicroSensor(coordinator, micro, desc)
         for micro in coordinator.micros
         for desc in MICRO_SENSORS
+    ]
+    entities += [
+        HoymilesPanelSensor(coordinator, micro, port, key)
+        for micro in coordinator.micros
+        for port in (micro.ports or [])
+        for key in PANEL_SENSORS
     ]
     _LOGGER.info("Created %d microinverter sensors", len(entities))
     async_add_entities(entities)

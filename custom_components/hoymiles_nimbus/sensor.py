@@ -62,16 +62,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     _LOGGER.warning("Fetching device data from Hoymiles S-Cloud...")
     stations = await hass.async_add_executor_job(client.select_by_page, "station")
 
-    # Build system map with individual modules
-    system = await hass.async_add_executor_job(client.map_system)
-    await hass.async_add_executor_job(client.fill_system_data, system)
-
     _LOGGER.warning("Found %d station(s) in Hoymiles account", len(stations))
 
     entities = []
-    
-    # Create a shared system coordinator for all module sensors
-    system_coordinator = HoymilesSystemCoordinator(hass, client, system)
     
     for station in stations:
         station_name = station.get('name', 'Unknown')
@@ -84,28 +77,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         entities.append(HoymilesStationTotalEnergySensor(client, name, sid, device_info))
         entities.append(HoymilesStationRatioSensor(client, name, sid, device_info))
 
-    # Add individual solar module sensors
-    for station in system:
-        station_name = station.name
-        sid = station.station_id
-        station_identifier = f"hoymiles_station_{station.station_id}"
-
-        for microinverter in station.microinverters:
-            for module in microinverter.modules:
-                module_name = f"{station_name} Panel {module.id}"
-                
-                # Create device info for the solar module
-                module_device_info = create_module_device_info(module.id, station_identifier)
-                
-                # Add power, voltage, and current sensors for each module
-                entities.append(HoymilesSolarModulePowerSensor(system_coordinator, module_name, station.station_id, module, module_device_info))
-                entities.append(HoymilesSolarModuleVoltageSensor(system_coordinator, module_name, station.station_id, module, module_device_info))
-                entities.append(HoymilesSolarModuleCurrentSensor(system_coordinator, module_name, station.station_id, module, module_device_info))
-
     _LOGGER.warning("Created %d sensors for Hoymiles devices", len(entities))
     async_add_entities(entities)
 
-    # Per-microinverter grid voltage / frequency / temperature / AC power
+    # Per-microinverter (grid voltage, frequency, temperature, AC power) and
+    # per-panel (DC power, voltage, current) sensors, from the count_by_day calls
     try:
         await async_setup_micro_sensors(hass, client, config_entry, async_add_entities)
     except Exception as err:  # noqa: BLE001 - never break the station/panel sensors

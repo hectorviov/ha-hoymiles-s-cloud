@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-09-28
+
+### Fixed
+- **Panel sensors reported thousands of watts at night.** The old panel data came from
+  `down_module_day_data` through a positional protobuf guess: when power was 0 the field
+  was omitted and the panel's daily energy (Wh) ended up in the power slot (e.g. "3,342 W").
+  Panels now use `pvm-data/api/0/module/data/count_by_day` (the call the website uses),
+  decoded by field number. Same unique IDs, so entities and dashboards carry over.
+- Values from a slot older than 40 minutes or from another day are treated as "not producing"
+  (power 0 W, voltage/current unknown) instead of repeating the last reading.
+
+### Changed
+- Panel data is fetched by the same coordinator as the microinverters (one refresh interval).
+- Microinverter AC power reads 0 W (not unknown) while the inverter sleeps.
+- Panel sensors expose `microinverter`, `port`, `position_x`, `position_y` and `data_time`.
+
 ## [0.5.1] - 2026-09-28
 
 ### Fixed
