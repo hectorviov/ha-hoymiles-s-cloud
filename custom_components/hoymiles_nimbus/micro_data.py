@@ -84,9 +84,10 @@ def parse_count_by_day(content: bytes, requested_micro_ids: list[int] | None = N
                 if f == 1 and wt == 2:
                     quota = v.decode("utf-8", "replace")
                 elif f == 2 and wt == 2:
-                    values = [x[0] for x in struct.iter_unpack("<d", v[: len(v) - len(v) % 8])]
+                    # Values are float32 upcast to double (269.799987...), so round them.
+                    values = [round(x[0], 2) for x in struct.iter_unpack("<d", v[: len(v) - len(v) % 8])]
                 elif f == 2 and wt == 1:  # unpacked double
-                    values.append(struct.unpack("<d", v)[0])
+                    values.append(round(struct.unpack("<d", v)[0], 2))
                 elif f == 3 and wt == 0:
                     micro_id = v
             if quota is None:

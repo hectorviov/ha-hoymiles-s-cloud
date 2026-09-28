@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-09-28
+
+### Fixed
+- Microinverter values are rounded to 2 decimals (the API sends float32 values such as 269.799987 V).
+
 ## [0.5.0] - 2026-09-28
 
 ### Added
