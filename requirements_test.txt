@@ -1,0 +1,4 @@
+pytest-homeassistant-custom-component
+argon2-cffi
+cachetools
+PyYAML
