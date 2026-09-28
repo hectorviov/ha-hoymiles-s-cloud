@@ -103,9 +103,11 @@ class HoymilesMicroCoordinator(DataUpdateCoordinator):
             for mid in ids:
                 # One request per inverter, exactly like the S-Cloud web UI does.
                 day = self._client.micro_count_by_day(sid, date, [mid])
+                if not day.date:
+                    day.date = date
                 values = latest_values(day, mid, now)
                 values.update(day_stats(day, mid))
-                values["date"] = day.date
+                values["date"] = day.date or date
                 values["modules"] = {}
                 micro = next(m for m in self.micros if m.micro_id == mid)
                 if micro.ports:
