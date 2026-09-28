@@ -98,7 +98,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        # Newer HA provides self.config_entry itself and forbids setting it.
+        try:
+            self.config_entry = config_entry
+        except AttributeError:
+            pass
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -106,12 +110,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Manage the options."""
         if user_input is not None:
             try:
-                await validate_input(self.hass, user_input)
-                # Update the config entry with new data
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry, data=user_input
+                interval = int(user_input.pop("scan_interval", 5))
+                creds_changed = any(
+                    user_input.get(k) != self.config_entry.data.get(k)
+                    for k in ("username", "password", "base_url")
                 )
-                return self.async_create_entry(title="", data={})
+                if creds_changed:
+                    await validate_input(self.hass, user_input)
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry, data={**self.config_entry.data, **user_input}
+                    )
+                # Saving options triggers a reload through the update listener
+                return self.async_create_entry(title="", data={"scan_interval": interval})
             except CannotConnect:
                 errors = {"base": "cannot_connect"}
             except InvalidAuth:
@@ -128,6 +138,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required("username", default=current_data.get("username", "")): str,
             vol.Required("password", default=current_data.get("password", "")): str,
             vol.Optional("base_url", default=current_data.get("base_url", "https://neapi.hoymiles.com/")): str,
+            vol.Required(
+                "scan_interval",
+                default=self.config_entry.options.get("scan_interval", current_data.get("scan_interval", 5)),
+            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=60)),
         })
 
         return self.async_show_form(

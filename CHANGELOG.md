@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-09-28
+
+### Added
+- **Refresh interval option** (Configure → Refresh interval, 5-60 min, default 5).
+  One setting for station, panel and microinverter sensors; changing it reloads the integration.
+- UI labels for the setup and options forms (`translations/en.json`).
+
+### Changed
+- Panel data was re-downloaded every 30 s; it now follows the refresh interval.
+- Station data (power, today, total) is cached for the refresh interval instead of a fixed 5 min.
+- Options form only re-validates the login when credentials actually change.
+
 ## [0.4.1] - 2026-09-27
 
 ### Fixed

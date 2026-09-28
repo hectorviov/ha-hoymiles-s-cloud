@@ -12,6 +12,11 @@ DOMAIN = "hoymiles_nimbus"
 
 _LOGGER = logging.getLogger(__name__)
 
+# How often HA asks the entities for a value. The API itself is only called
+# once per configured refresh interval; everything in between is served from cache.
+from datetime import timedelta
+SCAN_INTERVAL = timedelta(seconds=60)
+
 
 class HoymilesSystemCoordinator:
     """Coordinator to manage system data updates for all module sensors."""
@@ -27,9 +32,9 @@ class HoymilesSystemCoordinator:
         import datetime
         now = datetime.datetime.now()
         
-        # Update every 30 seconds to avoid too frequent API calls
+        # Refresh at most once per configured interval (Options → Refresh interval)
         if (self._last_update is None or 
-            (now - self._last_update).total_seconds() > 30):
+            (now - self._last_update).total_seconds() >= self._client.scan_interval_s):
             
             self._system = await self._hass.async_add_executor_job(self._client.map_system)
             await self._hass.async_add_executor_job(self._client.fill_system_data, self._system)
