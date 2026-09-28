@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-09-28
+
+### Security
+- The `Authorization` header (session token) is no longer written to the debug log.
+- Removed the unused `get_token` helper, which logged the password hash at debug level.
+
+### Removed
+- Dead code from the old panel pipeline: `down_module_day_data`, the positional
+  `ProtobufParser`, `classes/`, `map_system`/`fill_system_data` and the old panel sensor classes.
+
+### Added
+- Test suite in `tests/` (login, protobuf parsing, panel/inverter sensors, options, setup).
+
 ## [0.6.2] - 2026-09-28
 
 ### Fixed

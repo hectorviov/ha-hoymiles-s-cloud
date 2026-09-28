@@ -23,6 +23,11 @@ This is a **proof of concept** custom component for Home Assistant that integrat
 - **Panel Performance Analysis**: Compare performance across different panels to identify issues
 - **Position Mapping**: View panel layout with X/Y coordinates for spatial awareness
 
+### Microinverter Monitoring
+- **Grid Voltage, Grid Frequency, Temperature and AC Power** for every microinverter
+- **Grid Voltage Max Today**, useful to spot overvoltage problems on the grid
+- **Production Dropouts Today**: 5-minute slots where the inverter was producing before and after, had grid voltage, but reported 0 W (typical of grid-protection trips such as overvoltage)
+
 ### Intelligent Power Control
 - **Dynamic Power Limiting**: Adjust power output percentage of microinverters (5-100%)
 - **Smart Throttling**: Automatic rate limiting prevents API overload while ensuring timely updates
@@ -35,7 +40,7 @@ This is a **proof of concept** custom component for Home Assistant that integrat
 
 ### Advanced System Coordination
 - **Shared Data Coordinator**: Efficient data sharing between multiple sensors reduces API calls
-- **Automatic Updates**: Smart caching system updates data every 30 seconds when needed
+- **Configurable Refresh Interval**: one setting (5-60 minutes, default 5) for all sensors. Hoymiles only receives new data from the DTU about every 5 minutes, so faster polling does not give fresher data
 - **Error Resilience**: Graceful handling of missing or invalid data points
 
 ---
@@ -43,10 +48,10 @@ This is a **proof of concept** custom component for Home Assistant that integrat
 ## Nimbus Installation Guide
 
 ### 1. **Download the Nimbus Component**
-1. Clone or download this repository.
-2. Copy the `ha-hoymiles-s-cloud` folder into your Home Assistant `custom_components` directory:
+- **HACS**: add this repository under HACS → ⋮ → Custom repositories (type *Integration*) and download **Hoymiles Nimbus**.
+- **Manual**: copy the `custom_components/hoymiles_nimbus` folder into your Home Assistant configuration:
    ```
-   /config/custom_components/ha-hoymiles-s-cloud/
+   /config/custom_components/hoymiles_nimbus/
    ```
 
 ### 2. **Restart Home Assistant**
@@ -56,9 +61,10 @@ This is a **proof of concept** custom component for Home Assistant that integrat
 1. Go to **Settings > Devices & Services** in the Home Assistant UI.
 2. Click **Add Integration** and search for "Hoymiles Nimbus".
 3. Enter your Hoymiles S-Cloud credentials and the base URL (default: `https://neapi.hoymiles.com/`).
+   Both the current S-Cloud login (Argon2, used by recently created accounts) and the legacy login are supported.
 
 ### 4. **Configure Nimbus Settings**
-- After adding the integration, you can configure it further by clicking the **Configure** button in the **Devices & Services** section.
+- After adding the integration, click **Configure** in **Devices & Services** to change the credentials or the **Refresh interval**.
 
 ---
 
@@ -94,7 +100,8 @@ Once installed, Nimbus creates several types of entities for comprehensive monit
 ## Nimbus Limitations
 - This is a **proof of concept** and may not handle all edge cases.
 - The component relies on the Hoymiles S-Cloud API, which may change or become unavailable without notice.
-- API calls are intelligently throttled (30-second intervals) to avoid excessive usage while maintaining responsiveness.
+- API calls follow the configured refresh interval (default 5 minutes).
+- Microinverter and panel values come from the same 5-minute day series the S-Cloud website charts use; they are as fresh as the last DTU upload.
 - Power level changes are rate-limited to prevent rapid successive modifications that could impact system stability.
 
 ---
@@ -107,7 +114,7 @@ Once installed, Nimbus creates several types of entities for comprehensive monit
 - **Energy Optimization**: Develop intelligent power management based on usage patterns
 - **Multi-Site Support**: Enhanced support for installations across multiple locations
 - **Improved Error Handling**: More robust error recovery and user feedback mechanisms
-- **Unit Testing Suite**: Comprehensive testing framework for better reliability and maintenance
+- **Broader Test Coverage**: a first test suite lives in `tests/` (`pip install -r requirements_test.txt && pytest`)
 
 ---
 

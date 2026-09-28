@@ -1,7 +1,7 @@
 {
   "domain": "hoymiles_nimbus",
   "name": "Hoymiles Nimbus",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "documentation": "https://github.com/wil-lem/ha-hoymiles-s-cloud",
   "issue_tracker": "https://github.com/wil-lem/ha-hoymiles-s-cloud/issues",
   "dependencies": [],
