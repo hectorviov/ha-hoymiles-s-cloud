@@ -486,6 +486,7 @@ class HoymilesClient:
                     merged.times = part.times
                 for key, values in part.series.items():
                     merged.series.setdefault(key, {}).update(values)
+                merged.quota_times.update(part.quota_times)
         return merged
 
     @cached(cache=TTLCache(maxsize=100, ttl=300), lock=_CACHE_LOCK)

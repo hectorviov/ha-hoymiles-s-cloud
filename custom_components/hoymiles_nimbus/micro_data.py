@@ -121,6 +121,8 @@ class ModuleDaySeries:
     times: list[str] = field(default_factory=list)
     # {(micro_id, port): {quota: [values...]}}
     series: dict[tuple[int, int], dict[str, list[float]]] = field(default_factory=dict)
+    # Time axis of each quota (requests are separate, so they may differ)
+    quota_times: dict[str, list[str]] = field(default_factory=dict)
 
 
 def parse_module_count_by_day(content: bytes, requested_date: str | None = None) -> ModuleDaySeries:
@@ -152,6 +154,7 @@ def parse_module_count_by_day(content: bytes, requested_date: str | None = None)
             if quota is None or micro_id is None or port is None:
                 continue
             result.series.setdefault((micro_id, port), {})[quota] = values
+            result.quota_times.setdefault(quota, result.times)
     return result
 
 
@@ -172,24 +175,44 @@ def is_stale(date: str | None, time: str | None, now) -> bool:
 
 
 def latest_module_values(day: ModuleDaySeries, micro_id: int, port: int, now=None) -> dict:
+    """Latest power/voltage/current of one panel.
+
+    Each quota is aligned on its own time axis (they come from separate
+    requests). Current is calculated as P / V when the API has none.
+    """
     data = day.series.get((micro_id, port), {})
-    if not day.times or not data:
-        return {"power": 0.0, "voltage": None, "current": None, "time": None}
-    idx = len(day.times) - 1
+    empty = {"power": 0.0, "voltage": None, "current": None, "time": None, "current_calculated": False}
+    if not data:
+        return empty
+
+    def times_for(quota):
+        return day.quota_times.get(quota) or day.times
+
+    ref_times = times_for(MODULE_POWER)
+    if not ref_times:
+        return empty
+    time = ref_times[-1]
+    if is_stale(day.date, time, now):
+        return {**empty, "time": time}
 
     def at(quota):
         vals = data.get(quota) or []
+        times = times_for(quota)
+        try:
+            idx = times.index(time)
+        except ValueError:
+            return None
         return vals[idx] if idx < len(vals) else None
 
-    time = day.times[idx]
-    if is_stale(day.date, time, now):
-        return {"power": 0.0, "voltage": None, "current": None, "time": time}
-    return {
-        "power": at(MODULE_POWER) or 0.0,
-        "voltage": at(MODULE_VOLTAGE),
-        "current": at(MODULE_CURRENT),
-        "time": time,
-    }
+    power = at(MODULE_POWER) or 0.0
+    voltage = at(MODULE_VOLTAGE)
+    current = at(MODULE_CURRENT)
+    calculated = False
+    if current is None and voltage:
+        current = round(power / voltage, 2)
+        calculated = True
+    return {"power": power, "voltage": voltage, "current": current, "time": time,
+            "current_calculated": calculated}
 
 
 def latest_values(day: MicroDaySeries, micro_id: int, now=None) -> dict:
