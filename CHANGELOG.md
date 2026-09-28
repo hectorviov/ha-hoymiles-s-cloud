@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.2] - 2026-09-28
+
+### Fixed
+- Panel current showed "unknown": power, voltage and current come from separate
+  requests whose time axes can differ, and values were matched by position.
+  Each quota is now matched on the timestamp of the latest power slot.
+- When the API has no current for that slot, current is calculated as power / voltage
+  (the sensor then has the attribute `calculated: power / voltage`).
+
 ## [0.6.1] - 2026-09-28
 
 ### Fixed

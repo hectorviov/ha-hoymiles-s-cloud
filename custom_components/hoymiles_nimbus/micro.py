@@ -281,6 +281,8 @@ class HoymilesPanelSensor(CoordinatorEntity, SensorEntity):
         }
         if self._values.get("time"):
             attrs["data_time"] = self._values["time"]
+        if self._key == "current" and self._values.get("current_calculated"):
+            attrs["calculated"] = "power / voltage"
         return attrs
 
 
