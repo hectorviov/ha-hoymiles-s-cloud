@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-09-27
+
+### Fixed
+- **Login for current S-Cloud accounts**: uses the v3 login the website uses
+  (`pre-insp` + Argon2id or unsalted hash + nonce), trying the web and then the
+  S-Miles Installer identity, with the old v0 MD5 login as a last fallback.
+  Accounts that only accept the new login used to fail with `cannot_connect`.
+- The real login error is now written to the Home Assistant log.
+
+### Changed
+- Added `argon2-cffi` requirement.
+
 ## [0.4.0] - 2026-09-27
 
 ### Added
